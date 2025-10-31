@@ -30,7 +30,7 @@ logger = get_logger(__name__)
 
 
 class MiddlewareServerSession(ServerSession):
-    """ServerSession that routes initialization requests through FastMCP middleware."""
+    """ServerSession that routes initialization and disconnection through FastMCP middleware."""
 
     def __init__(self, fastmcp: FastMCP, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -43,6 +43,40 @@ class MiddlewareServerSession(ServerSession):
         if fastmcp is None:
             raise RuntimeError("FastMCP instance is no longer available")
         return fastmcp
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Call disconnect middleware before closing the session."""
+        try:
+            await self._call_disconnect_middleware()
+        except Exception:
+            # Don't let middleware errors prevent session cleanup
+            logger.exception("Error calling disconnect middleware")
+
+        return await super().__aexit__(exc_type, exc_val, exc_tb)
+
+    async def _call_disconnect_middleware(self):
+        """Call middleware disconnect hooks."""
+        from fastmcp.server.middleware.middleware import MiddlewareContext
+
+        try:
+            # Create the middleware context for disconnect
+            # Note: We don't create a full Context here since we're outside a request
+            mw_context = MiddlewareContext(
+                message=None,  # There's no message in this case
+                source="server",
+                type="notification",
+                method="disconnect",
+                fastmcp_context=None,  # No request context during disconnect
+            )
+
+            async def noop_handler(ctx: MiddlewareContext) -> None:
+                """No-op handler for disconnect."""
+                # There's no next action here
+
+            await self.fastmcp._apply_middleware(mw_context, noop_handler)
+        except Exception:
+            # Log but don't raise - we're in cleanup
+            logger.exception("Error in disconnect middleware")
 
     async def _received_request(
         self,

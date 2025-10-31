@@ -104,8 +104,11 @@ This hierarchy allows you to target your middleware logic with the right level o
 - `on_list_prompts`: Called when listing available prompts
 <VersionBadge version="2.13.0" />
 - `on_initialize`: Called when a client connects and initializes the session (returns `None`) 
+- `on_disconnect`: Called when a client disconnects and the session is closing (returns `None`)
 <Note>
-The `on_initialize` hook receives the client's initialization request but **returns `None`** rather than a result. The initialization response is handled internally by the MCP protocol and cannot be modified by middleware. This hook is useful for client detection, logging connections, or initializing session state, but not for modifying the initialization handshake itself.
+The `on_initialize` and `on_disconnect` hooks provide lifecycle management for client sessions:
+- **`on_initialize`** receives the client's initialization request but **returns `None`** rather than a result. The initialization response is handled internally by the MCP protocol and cannot be modified by middleware. This hook is useful for client detection, logging connections, or initializing session state.
+- **`on_disconnect`** is called when the session context manager exits (client disconnects). It also **returns `None`** and cannot modify the disconnection process. This hook is useful for cleanup operations, closing resources, logging disconnections, or persisting session data.
 </Note>
 
 ## Component Access in Middleware
@@ -734,6 +737,70 @@ def my_tool(data: str) -> str:
 ```
 
 This configuration provides comprehensive monitoring, protection, and observability for your MCP server.
+
+### Session Lifecycle Management
+
+<VersionBadge version="2.13.0" />
+
+Track client connections and perform cleanup operations using the `on_initialize` and `on_disconnect` hooks:
+
+```python
+from fastmcp.server.middleware import Middleware, MiddlewareContext
+import mcp.types as mt
+
+class SessionLifecycleMiddleware(Middleware):
+    def __init__(self):
+        self.active_sessions = {}
+    
+    async def on_initialize(
+        self,
+        context: MiddlewareContext[mt.InitializeRequest],
+        call_next
+    ):
+        """Track when clients connect."""
+        if context.fastmcp_context:
+            session_id = context.fastmcp_context.session_id
+            client_name = (
+                context.message.params.clientInfo.name
+                if context.message.params.clientInfo
+                else "Unknown"
+            )
+            
+            # Store session data
+            self.active_sessions[session_id] = {
+                "client": client_name,
+                "connected_at": datetime.now(),
+            }
+            
+            print(f"Client connected: {client_name} (session: {session_id})")
+        
+        return await call_next(context)
+    
+    async def on_disconnect(self, context: MiddlewareContext[None], call_next):
+        """Cleanup when clients disconnect."""
+        if context.fastmcp_context:
+            session_id = context.fastmcp_context.session_id
+            
+            if session_id in self.active_sessions:
+                session_data = self.active_sessions.pop(session_id)
+                print(f"Client disconnected: {session_data['client']}")
+                
+                # Perform cleanup operations
+                # - Close database connections
+                # - Save session data
+                # - Release resources
+        
+        return await call_next(context)
+
+mcp.add_middleware(SessionLifecycleMiddleware())
+```
+
+This pattern is useful for:
+- Tracking active client connections
+- Managing per-session resources (database connections, file handles)
+- Logging connection/disconnection events
+- Persisting session data on disconnect
+- Cleanup operations when clients leave
 
 ### Custom Middleware Example
 
