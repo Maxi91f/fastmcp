@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import weakref
 from contextlib import AsyncExitStack
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import anyio
 import mcp.types
@@ -20,6 +20,7 @@ from mcp.server.session import ServerSession
 from mcp.server.stdio import stdio_server as stdio_server
 from mcp.shared.message import SessionMessage
 from mcp.shared.session import RequestResponder
+from mcp.types import InitializeRequestParams, Request
 
 from fastmcp.utilities.logging import get_logger
 
@@ -27,6 +28,18 @@ if TYPE_CHECKING:
     from fastmcp.server.server import FastMCP
 
 logger = get_logger(__name__)
+
+
+class DisconnectPseudoRequest(Request[InitializeRequestParams, Literal["disconnect"]]):
+    """
+    A pseudo-request for disconnect events.
+    
+    This mimics the structure of InitializeRequest to provide client information
+    during disconnect, but is not part of the MCP protocol.
+    """
+
+    method: Literal["disconnect"] = "disconnect"
+    params: InitializeRequestParams
 
 
 class MiddlewareServerSession(ServerSession):
@@ -56,24 +69,31 @@ class MiddlewareServerSession(ServerSession):
 
     async def _call_disconnect_middleware(self):
         """Call middleware disconnect hooks."""
+        import fastmcp.server.context
         from fastmcp.server.middleware.middleware import MiddlewareContext
 
         try:
-            # Create the middleware context for disconnect
-            # Note: We don't create a full Context here since we're outside a request
-            mw_context = MiddlewareContext(
-                message=None,  # There's no message in this case
-                source="server",
-                type="notification",
-                method="disconnect",
-                fastmcp_context=None,  # No request context during disconnect
-            )
+            # Create a pseudo disconnect request with client params
+            disconnect_msg = DisconnectPseudoRequest(params=self.client_params)
 
-            async def noop_handler(ctx: MiddlewareContext) -> None:
-                """No-op handler for disconnect."""
-                # There's no next action here
+            # Create a Context like in on_initialize
+            async with fastmcp.server.context.Context(
+                fastmcp=self.fastmcp
+            ) as fastmcp_ctx:
+                # Create the middleware context for disconnect
+                mw_context = MiddlewareContext(
+                    message=disconnect_msg,
+                    source="server",
+                    type="notification",
+                    method="disconnect",
+                    fastmcp_context=fastmcp_ctx,
+                )
 
-            await self.fastmcp._apply_middleware(mw_context, noop_handler)
+                async def noop_handler(ctx: MiddlewareContext) -> None:
+                    """No-op handler for disconnect."""
+                    # There's no next action here
+
+                await self.fastmcp._apply_middleware(mw_context, noop_handler)
         except Exception:
             # Log but don't raise - we're in cleanup
             logger.exception("Error in disconnect middleware")

@@ -21,6 +21,7 @@ from typing_extensions import TypeVar
 from fastmcp.prompts.prompt import Prompt
 from fastmcp.resources.resource import Resource
 from fastmcp.resources.template import ResourceTemplate
+from fastmcp.server.low_level import DisconnectPseudoRequest
 from fastmcp.tools.tool import Tool, ToolResult
 
 if TYPE_CHECKING:
@@ -158,8 +159,8 @@ class Middleware:
 
     async def on_disconnect(
         self,
-        context: MiddlewareContext[None],
-        call_next: CallNext[None, None],
+        context: MiddlewareContext[DisconnectPseudoRequest],
+        call_next: CallNext[DisconnectPseudoRequest, None],
     ) -> None:
         return await call_next(context)
 

@@ -108,7 +108,7 @@ This hierarchy allows you to target your middleware logic with the right level o
 <Note>
 The `on_initialize` and `on_disconnect` hooks provide lifecycle management for client sessions:
 - **`on_initialize`** receives the client's initialization request but **returns `None`** rather than a result. The initialization response is handled internally by the MCP protocol and cannot be modified by middleware. This hook is useful for client detection, logging connections, or initializing session state.
-- **`on_disconnect`** is called when the session context manager exits (client disconnects). It also **returns `None`** and cannot modify the disconnection process. This hook is useful for cleanup operations, closing resources, logging disconnections, or persisting session data.
+- **`on_disconnect`** is called when the session context manager exits (client disconnects). It also **returns `None`** and cannot modify the disconnection process. This hook is useful for cleanup operations, closing resources, logging disconnections, or persisting session data. Receives a pseudo-request with `params` containing the client's initialization parameters (capabilities, clientInfo), but has limited context (no request context).
 </Note>
 
 ## Component Access in Middleware
@@ -776,19 +776,18 @@ class SessionLifecycleMiddleware(Middleware):
         
         return await call_next(context)
     
-    async def on_disconnect(self, context: MiddlewareContext[None], call_next):
+    async def on_disconnect(self, context: MiddlewareContext, call_next):
         """Cleanup when clients disconnect."""
-        if context.fastmcp_context:
-            session_id = context.fastmcp_context.session_id
+        # Find and remove the most recent session (simplified for example)
+        if self.active_sessions:
+            session_id = max(self.active_sessions.keys())
+            session_data = self.active_sessions.pop(session_id)
+            print(f"Client disconnected: {session_data['client']}")
             
-            if session_id in self.active_sessions:
-                session_data = self.active_sessions.pop(session_id)
-                print(f"Client disconnected: {session_data['client']}")
-                
-                # Perform cleanup operations
-                # - Close database connections
-                # - Save session data
-                # - Release resources
+            # Perform cleanup operations
+            # - Close database connections
+            # - Save session data
+            # - Release resources
         
         return await call_next(context)
 

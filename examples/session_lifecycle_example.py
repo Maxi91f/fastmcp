@@ -28,17 +28,23 @@ class SessionLifecycleMiddleware(Middleware):
         """Called when a client connects."""
         self.total_connections += 1
 
-        client_name = "Unknown"
-        if context.message.params.clientInfo:
-            client_name = context.message.params.clientInfo.name
+        # Create a session identifier from client info
+        client_info = context.message.params.clientInfo
+        client_name = client_info.name if client_info else "Unknown"
+        client_version = client_info.version if client_info else "unknown"
+        
+        # Use client name + version as session key
+        session_key = f"{client_name}:{client_version}:{self.total_connections}"
 
         # Store session data
-        self.active_sessions[self.total_connections] = {
+        self.active_sessions[session_key] = {
             "client": client_name,
+            "version": client_version,
             "connected_at": datetime.now(),
         }
 
-        print(f"✅ Client connected: {client_name}")
+        print(f"✅ Client connected: {client_name} v{client_version}")
+        print(f"   Session key: {session_key}")
         print(f"   Total connections: {self.total_connections}")
         print(f"   Active sessions: {len(self.active_sessions)}")
         print()
@@ -47,18 +53,28 @@ class SessionLifecycleMiddleware(Middleware):
 
     async def on_disconnect(
         self,
-        context: MiddlewareContext[None],
-        call_next: CallNext[None, None],
+        context: MiddlewareContext,
+        call_next: CallNext,
     ) -> None:
         """Called when a client disconnects."""
-        # Find and remove the most recent session (simplified for example)
-        if self.active_sessions:
-            session_id = max(self.active_sessions.keys())
-            session_data = self.active_sessions.pop(session_id)
-
+        # Reconstruct session key from disconnect message params
+        client_info = context.message.params.clientInfo
+        client_name = client_info.name if client_info else "Unknown"
+        client_version = client_info.version if client_info else "unknown"
+        
+        # Find matching session by client name and version
+        matching_key = None
+        for key in self.active_sessions:
+            if key.startswith(f"{client_name}:{client_version}:"):
+                matching_key = key
+                break
+        
+        if matching_key:
+            session_data = self.active_sessions.pop(matching_key)
             duration = datetime.now() - session_data["connected_at"]
 
-            print(f"❌ Client disconnected: {session_data['client']}")
+            print(f"❌ Client disconnected: {session_data['client']} v{session_data['version']}")
+            print(f"   Session key: {matching_key}")
             print(f"   Session duration: {duration.total_seconds():.1f} seconds")
             print(f"   Remaining active sessions: {len(self.active_sessions)}")
             print()
@@ -87,10 +103,12 @@ def get_active_sessions() -> dict:
         "active_sessions": len(lifecycle_middleware.active_sessions),
         "sessions": [
             {
+                "session_key": key,
                 "client": data["client"],
+                "version": data["version"],
                 "connected_at": data["connected_at"].isoformat(),
             }
-            for data in lifecycle_middleware.active_sessions.values()
+            for key, data in lifecycle_middleware.active_sessions.items()
         ],
     }
 
